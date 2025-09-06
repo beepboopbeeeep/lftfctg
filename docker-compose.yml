@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  telegram-music-bot:
+    build: .
+    container_name: telegram-music-bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_USER_ID=${ADMIN_USER_ID}
+      - FIREBASE_CREDENTIALS_PATH=${FIREBASE_CREDENTIALS_PATH:-config/firebase-credentials.json}
+      - FIREBASE_DATABASE_URL=${FIREBASE_DATABASE_URL}
+    volumes:
+      - ./downloads:/app/downloads
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+      - ./config:/app/config
+    networks:
+      - bot-network
+
+  # Optional: Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: telegram-music-bot-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot-network
+
+  # Optional: PostgreSQL for data storage
+  postgres:
+    image: postgres:15-alpine
+    container_name: telegram-music-bot-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-telegram_bot}
+      - POSTGRES_USER=${POSTGRES_USER:-botuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-botpassword}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:

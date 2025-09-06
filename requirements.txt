@@ -1,0 +1,9 @@
+python-telegram-bot>=20.4
+shazamio>=0.6.0
+yt-dlp>=2023.7.6
+instaloader>=4.9.2
+requests>=2.31.0
+firebase-admin>=6.3.0
+spotipy>=2.23.0
+mutagen>=1.46.0
+Pillow>=10.0.0
