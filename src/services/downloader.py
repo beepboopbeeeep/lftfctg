@@ -14,32 +14,57 @@ import yt_dlp
 import requests
 import instaloader
 
+from utils.ffmpeg_manager import ffmpeg_manager, setup_ffmpeg, is_ffmpeg_available
+
 logger = logging.getLogger(__name__)
 
 class Downloader:
     def __init__(self):
-        self.ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': 'downloads/%(title)s.%(ext)s',
-            'quiet': False,
-            'no_warnings': False,
-            'extract_flat': 'discard_in_playlist',
-            'fragment_retries': 10,
-            'retry_sleep_functions': {
-                'http': lambda n: min(n * 2, 10),
-                'fragment': lambda n: min(n * 2, 10),
-            },
-        }
+        # Setup FFmpeg first
+        self.ffmpeg_available = setup_ffmpeg()
+        
+        # Configure yt-dlp options based on FFmpeg availability
+        if self.ffmpeg_available:
+            self.ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': 'downloads/%(title)s.%(ext)s',
+                'quiet': False,
+                'no_warnings': False,
+                'extract_flat': 'discard_in_playlist',
+                'fragment_retries': 10,
+                'retry_sleep_functions': {
+                    'http': lambda n: min(n * 2, 10),
+                    'fragment': lambda n: min(n * 2, 10),
+                },
+            }
+        else:
+            # Fallback options without FFmpeg post-processing
+            self.ydl_opts = {
+                'format': 'bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio/best',
+                'outtmpl': 'downloads/%(title)s.%(ext)s',
+                'quiet': False,
+                'no_warnings': False,
+                'extract_flat': 'discard_in_playlist',
+                'fragment_retries': 10,
+                'retry_sleep_functions': {
+                    'http': lambda n: min(n * 2, 10),
+                    'fragment': lambda n: min(n * 2, 10),
+                },
+                'postprocessors': [],  # No FFmpeg post-processors
+            }
         
         self.instaloader_instance = instaloader.Instaloader()
         
         # Create downloads directory
         os.makedirs("downloads", exist_ok=True)
+        
+        if not self.ffmpeg_available:
+            logger.warning("FFmpeg not available. Some features may be limited.")
     
     async def download_song(self, query: str) -> Optional[str]:
         """
@@ -52,23 +77,20 @@ class Downloader:
             Path to downloaded file or None if failed
         """
         try:
+            if not self.ffmpeg_available:
+                logger.warning("FFmpeg not available. Download quality may be limited.")
+            
             # Search YouTube for the song
-            search_opts = {
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                'outtmpl': 'downloads/%(title)s.%(ext)s',
+            search_opts = self.ydl_opts.copy()
+            search_opts.update({
                 'quiet': True,
                 'default_search': 'auto',
                 'source_address': '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
-            }
+            })
             
             with yt_dlp.YoutubeDL(search_opts) as ydl:
                 info = ydl.extract_info(f"ytsearch:{query}", download=True)['entries'][0]
-                downloaded_file = ydl.prepare_filename(info).replace('.webm', '.mp3').replace('.m4a', '.mp3')
+                downloaded_file = ydl.prepare_filename(info)
                 
                 # Check if file exists and return the path
                 if os.path.exists(downloaded_file):
@@ -77,7 +99,7 @@ class Downloader:
                 else:
                     # Try to find the downloaded file
                     base_name = os.path.splitext(downloaded_file)[0]
-                    for ext in ['.mp3', '.m4a', '.webm']:
+                    for ext in ['.mp3', '.m4a', '.webm', '.opus']:
                         test_file = f"{base_name}{ext}"
                         if os.path.exists(test_file):
                             logger.info(f"Song downloaded successfully: {test_file}")
@@ -381,13 +403,24 @@ class Downloader:
                 logger.error(f"Video file not found: {video_path}")
                 return None
             
+            if not self.ffmpeg_available:
+                logger.error("FFmpeg not available. Cannot extract audio from video.")
+                return None
+            
             # Generate output path
             base_name = os.path.splitext(video_path)[0]
             audio_path = f"{base_name}.mp3"
             
+            # Get FFmpeg path
+            ffmpeg_path, ffprobe_path = ffmpeg_manager.get_ffmpeg_path(), ffmpeg_manager.get_ffprobe_path()
+            
+            if not ffmpeg_path:
+                logger.error("FFmpeg not found. Cannot extract audio.")
+                return None
+            
             # Use ffmpeg to extract audio
             cmd = [
-                'ffmpeg',
+                ffmpeg_path,
                 '-i', video_path,
                 '-vn',  # No video
                 '-acodec', 'libmp3lame',
@@ -409,7 +442,8 @@ class Downloader:
                 logger.info(f"Audio extracted successfully: {audio_path}")
                 return audio_path
             else:
-                logger.error(f"Error extracting audio: {stderr.decode()}")
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.error(f"Error extracting audio: {error_msg}")
                 return None
                 
         except Exception as e:
@@ -440,6 +474,20 @@ class Downloader:
         except Exception as e:
             logger.error(f"Error getting download info: {e}")
             return None
+    
+    def get_ffmpeg_status(self) -> Dict:
+        """
+        Get FFmpeg status information
+        
+        Returns:
+            Dictionary with FFmpeg status
+        """
+        return {
+            'available': self.ffmpeg_available,
+            'ffmpeg_path': ffmpeg_manager.get_ffmpeg_path(),
+            'ffprobe_path': ffmpeg_manager.get_ffprobe_path(),
+            'installation_commands': ffmpeg_manager.get_installation_commands()
+        }
     
     async def _get_youtube_info(self, url: str) -> Optional[Dict]:
         """

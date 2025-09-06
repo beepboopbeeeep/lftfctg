@@ -48,6 +48,7 @@ from config import BOT_MESSAGES, BOT_TOKEN, ADMIN_USER_ID, AUDIO_FORMATS, VIDEO_
 from services.song_recognizer import SongRecognizer
 from services.downloader import Downloader
 from services.firebase_service import FirebaseService
+from utils.ffmpeg_manager import ffmpeg_manager, setup_ffmpeg, is_ffmpeg_available
 from utils.helpers import (
     format_duration,
     get_file_extension,
@@ -91,6 +92,7 @@ class MusicBot:
             BotCommand("help", "Show help"),
             BotCommand("statistics", "Show bot statistics"),
             BotCommand("language", "Change language"),
+            BotCommand("ffmpeg", "Check FFmpeg status"),
             BotCommand("broadcast", "Broadcast message (admin only)"),
         ]
         self.application.bot.set_my_commands(commands)
@@ -181,6 +183,47 @@ class MusicBot:
         )
         
         await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML)
+    
+    async def ffmpeg_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /ffmpeg command"""
+        user_id = update.effective_user.id
+        
+        # Get FFmpeg status
+        ffmpeg_status = self.downloader.get_ffmpeg_status()
+        
+        if ffmpeg_status['available']:
+            status_text = f"✅ FFmpeg is available and working properly!\n\n"
+            status_text += f"📁 FFmpeg Path: {ffmpeg_status['ffmpeg_path']}\n"
+            status_text += f"📁 FFprobe Path: {ffmpeg_status['ffprobe_path']}\n\n"
+            status_text += "🎵 All audio/video processing features are enabled."
+        else:
+            status_text = "❌ FFmpeg is not available!\n\n"
+            status_text += "This will limit some features:\n"
+            status_text += "• Audio extraction from videos\n"
+            status_text += "• Audio format conversion\n"
+            status_text += "• High-quality audio processing\n\n"
+            status_text += "🔧 To install FFmpeg:\n"
+            
+            # Add installation commands for common systems
+            commands = ffmpeg_status['installation_commands']
+            if 'ubuntu_debian' in commands:
+                status_text += "\n📦 Ubuntu/Debian:\n"
+                for cmd in commands['ubuntu_debian']['commands']:
+                    status_text += f"  {cmd}\n"
+            
+            if 'centos_rhel' in commands:
+                status_text += "\n📦 CentOS/RHEL:\n"
+                for cmd in commands['centos_rhel']['commands']:
+                    status_text += f"  {cmd}\n"
+            
+            if 'macos' in commands:
+                status_text += "\n📦 macOS:\n"
+                for cmd in commands['macos']['commands']:
+                    status_text += f"  {cmd}\n"
+            
+            status_text += "\n💡 After installation, restart the bot."
+        
+        await update.message.reply_text(status_text, parse_mode=ParseMode.HTML)
     
     async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /language command"""
@@ -544,6 +587,7 @@ class MusicBot:
         self.application.add_handler(CommandHandler("start", self.start_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("statistics", self.statistics_command))
+        self.application.add_handler(CommandHandler("ffmpeg", self.ffmpeg_command))
         self.application.add_handler(CommandHandler("language", self.language_command))
         self.application.add_handler(CommandHandler("broadcast", self.broadcast_command))
         
